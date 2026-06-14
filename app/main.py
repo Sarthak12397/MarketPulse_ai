@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from app.models.request import SignalRequest
 from app.models.response import SignalResponse

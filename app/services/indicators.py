@@ -1,38 +1,39 @@
 import pandas as pd
-import pandas_ta as ta
 
 
 def compute_indicators(candles: list[dict]) -> dict:
     df = pd.DataFrame(candles)
-
-    # Use open_time_utc as index — matches .NET field name
     df["open_time_utc"] = pd.to_datetime(df["open_time_utc"])
     df.set_index("open_time_utc", inplace=True)
     df.sort_index(inplace=True)
 
-    # Ensure numeric columns
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col])
 
     # ── RSI ───────────────────────────────────────────────
-    df["rsi"] = ta.rsi(df["close"], length=14)
+    delta     = df["close"].diff()
+    gain      = delta.clip(lower=0)
+    loss      = -delta.clip(upper=0)
+    avg_gain  = gain.ewm(com=13, adjust=False).mean()
+    avg_loss  = loss.ewm(com=13, adjust=False).mean()
+    rs        = avg_gain / avg_loss
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    # ── EMA ───────────────────────────────────────────────
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
 
     # ── MACD ──────────────────────────────────────────────
-    macd = ta.macd(df["close"])
-    if macd is not None:
-        df["macd"]        = macd["MACD_12_26_9"]
-        df["macd_signal"] = macd["MACDs_12_26_9"]
-    else:
-        df["macd"]        = None
-        df["macd_signal"] = None
+    ema12          = df["close"].ewm(span=12, adjust=False).mean()
+    ema26          = df["close"].ewm(span=26, adjust=False).mean()
+    df["macd"]     = ema12 - ema26
+    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
 
-    # ── EMA Crossover ─────────────────────────────────────
-    df["ema20"] = ta.ema(df["close"], length=20)
-    df["ema50"] = ta.ema(df["close"], length=50)
+    # ── ATR ───────────────────────────────────────────────
+    high_low   = df["high"] - df["low"]
+    high_close = (df["high"] - df["close"].shift()).abs()
+    low_close  = (df["low"]  - df["close"].shift()).abs()
+    tr         = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df["atr"]  = tr.ewm(span=14, adjust=False).mean()
 
-    # ── ATR (for entry zones / stop loss / take profit) ───
-    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-
-    # Return latest bar only as dict
-    latest = df.iloc[-1].to_dict()
-    return latest
+    return df.iloc[-1].to_dict()

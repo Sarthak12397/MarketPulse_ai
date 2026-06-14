@@ -1,13 +1,12 @@
 from app.models.request import SignalRequest
 from app.models.response import SignalResponse
 from app.services.indicators import compute_indicators
+from app.services.news_sentiment import get_news_sentiment
 
 
 def generate_signal(request: SignalRequest) -> SignalResponse:
-    # Convert Pydantic models to dicts for pandas
     candles = [c.model_dump() for c in request.candles]
 
-    # Need minimum candles for indicators to work
     if len(candles) < 50:
         return SignalResponse(
             direction        = "Neutral",
@@ -57,12 +56,18 @@ def generate_signal(request: SignalRequest) -> SignalResponse:
             votes.append("Short")
             reasoning.append("EMA20 below EMA50 supports downward trend bias.")
 
+    # ── NEWS Vote (4th signal) ────────────────────────────
+    news = get_news_sentiment(request.symbol)
+    if news["vote"] != "Neutral":
+        votes.append(news["vote"])
+    reasoning.append(news["reasoning"])
+
     # ── Derive Direction + Confidence ─────────────────────
     if not votes:
         return SignalResponse(
             direction        = "Neutral",
             confidence_score = 0.20,
-            reasoning        = "Indicators returned no usable values."
+            reasoning        = " ".join(reasoning)
         )
 
     long_v  = votes.count("Long")
@@ -70,17 +75,17 @@ def generate_signal(request: SignalRequest) -> SignalResponse:
     total   = len(votes)
 
     if long_v == total:
-        direction, confidence = "Long",    0.80
+        direction, confidence = "Long",    0.85  # all 4 agree
     elif short_v == total:
-        direction, confidence = "Short",   0.80
+        direction, confidence = "Short",   0.85  # all 4 agree
     elif long_v > short_v:
-        direction, confidence = "Long",    0.58
+        direction, confidence = "Long",    0.60
     elif short_v > long_v:
-        direction, confidence = "Short",   0.58
+        direction, confidence = "Short",   0.60
     else:
         direction, confidence = "Neutral", 0.30
 
-    # ── ATR-Based Price Levels (Premium Fields) ───────────
+    # ── ATR Price Levels ──────────────────────────────────
     atr   = ind.get("atr")
     close = candles[-1]["close"]
     ezl = ezh = sl = tp1 = tp2 = None
@@ -92,7 +97,7 @@ def generate_signal(request: SignalRequest) -> SignalResponse:
             sl  = round(close - (atr * 1.5), 8)
             tp1 = round(close + (atr * 2.0), 8)
             tp2 = round(close + (atr * 3.5), 8)
-        else:  # Short
+        else:
             ezl = round(close - (atr * 0.3), 8)
             ezh = round(close + (atr * 0.3), 8)
             sl  = round(close + (atr * 1.5), 8)
